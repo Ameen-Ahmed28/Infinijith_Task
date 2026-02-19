@@ -1,0 +1,19 @@
+[project]
+name = "infinijith"
+version = "0.1.0"
+description = "PDF Question-Answering Agent with LangChain and Streamlit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-chroma>=0.2.0",
+    "langchain-huggingface>=0.1.0",
+    "streamlit>=1.40.0",
+    "pypdf>=5.0.0",
+    "chromadb>=0.5.0",
+    "langchain-text-splitters>=1.1.1",
+    "python-dotenv>=1.0.0",
+    "sentence-transformers>=3.0.0",
+]
