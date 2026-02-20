@@ -8,12 +8,12 @@ Defines the two main tools for the PDF QA Agent:
 These tools are used by the LangChain agent for intelligent routing.
 """
 
-from typing import Optional, Type
+from typing import Optional, Type, Any, Union
 
 from langchain_core.tools import BaseTool
 from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForToolRun
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.vector_store import VectorStoreManager
 
@@ -21,19 +21,47 @@ from src.vector_store import VectorStoreManager
 class PDFRetrievalInput(BaseModel):
     """Input schema for PDF Retrieval Tool."""
     
-    query: str = Field(
+    query: Any = Field(
         default="",
         description="The question or query to search for in the uploaded PDF document"
     )
+    
+    @field_validator('query', mode='before')
+    @classmethod
+    def validate_query(cls, v):
+        """Handle cases where LLM passes schema dict instead of string."""
+        print(f"[DEBUG] PDFRetrievalInput validator received: type={type(v)}, value={v}")
+        if isinstance(v, dict):
+            # LLM passed the schema itself - extract or provide fallback
+            if 'query' in v and isinstance(v['query'], str):
+                return v['query']
+            # This is likely the schema dict being passed as value
+            return "Error extracting query from tool call"
+        if isinstance(v, str):
+            return v
+        return str(v) if v else ""
 
 
 class GeneralLLMInput(BaseModel):
     """Input schema for General LLM Tool."""
     
-    query: str = Field(
+    query: Any = Field(
         default="",
         description="The general knowledge question to answer"
     )
+    
+    @field_validator('query', mode='before')
+    @classmethod
+    def validate_query(cls, v):
+        """Handle cases where LLM passes schema dict instead of string."""
+        print(f"[DEBUG] GeneralLLMInput validator received: type={type(v)}, value={v}")
+        if isinstance(v, dict):
+            if 'query' in v and isinstance(v['query'], str):
+                return v['query']
+            return "Error extracting query from tool call"
+        if isinstance(v, str):
+            return v
+        return str(v) if v else ""
 
 
 class PDFRetrievalTool(BaseTool):
@@ -95,6 +123,25 @@ class PDFRetrievalTool(BaseTool):
         Returns:
             Retrieved context as a formatted string
         """
+        # DEBUG: Log the actual query type and value
+        print(f"[DEBUG] PDFRetrievalTool._run called with query type: {type(query)}, value: {query}")
+        
+        # Handle case where LLM passes schema dict instead of string
+        if isinstance(query, dict):
+            print(f"[DEBUG] Query is a dict, attempting to extract actual query. Keys: {query.keys()}")
+            # Try to extract the actual query from common patterns
+            if 'query' in query:
+                query = query['query']
+            elif 'description' in query:
+                # This means the LLM passed the schema itself - use a fallback
+                print("[DEBUG] LLM passed schema as query - this indicates tool calling issues")
+                return "Error: The query was not properly formatted. Please try rephrasing your question."
+            else:
+                query = str(query)
+        
+        if not isinstance(query, str):
+            query = str(query)
+            
         if self.vector_store_manager is None:
             return "Error: No PDF has been uploaded. Please upload a PDF first."
         
@@ -182,6 +229,23 @@ class GeneralLLMTool(BaseTool):
         Returns:
             The query formatted for direct LLM response
         """
+        # DEBUG: Log the actual query type and value
+        print(f"[DEBUG] GeneralLLMTool._run called with query type: {type(query)}, value: {query}")
+        
+        # Handle case where LLM passes schema dict instead of string
+        if isinstance(query, dict):
+            print(f"[DEBUG] Query is a dict, attempting to extract actual query. Keys: {query.keys()}")
+            if 'query' in query:
+                query = query['query']
+            elif 'description' in query:
+                print("[DEBUG] LLM passed schema as query - this indicates tool calling issues")
+                return "Error: The query was not properly formatted. Please try rephrasing your question."
+            else:
+                query = str(query)
+        
+        if not isinstance(query, str):
+            query = str(query)
+            
         # This tool doesn't do any processing - it just signals that
         # the query should be answered directly by the LLM
         return f"Answer this general knowledge question: {query}"

@@ -23,35 +23,53 @@ from src.tools import (
 from src.vector_store import VectorStoreManager
 
 
-# System prompt for the agent
-SYSTEM_PROMPT = """You are an intelligent PDF Question-Answering Assistant with access to two tools:
+def get_system_prompt(has_pdf: bool = False, pdf_filename: str = None) -> str:
+    """
+    Generate the system prompt based on whether a PDF is uploaded.
+    
+    Args:
+        has_pdf: Whether a PDF has been uploaded
+        pdf_filename: Name of the uploaded PDF file
+        
+    Returns:
+        System prompt string
+    """
+    pdf_status = "A PDF document has been uploaded" if has_pdf else "No PDF document has been uploaded"
+    pdf_info = f" The document name is '{pdf_filename}'." if pdf_filename else ""
+    
+    return f"""You are an intelligent PDF Question-Answering Assistant with access to two tools.
 
-1. **PDF Retrieval Tool** (`pdf_retrieval`): Use this when the user's question is about content in the uploaded PDF document. This tool searches the document and returns relevant passages.
+**CURRENT STATUS:** {pdf_status}{pdf_info}
 
-2. **General LLM Tool** (`general_llm`): Use this for general knowledge questions that don't require the PDF document context.
+## Available Tools:
 
-## Tool Selection Guidelines:
+1. **pdf_retrieval**: Search and retrieve information from the uploaded PDF document.
+   - Use this tool when the user's question is about content in the uploaded PDF
+   - Use when the user references "the document", "the PDF", "this paper", or asks about specific content
+   - This tool returns relevant passages from the document
 
-**Use PDF Retrieval when:**
-- The question asks about specific content from the uploaded document
-- The user references "the document", "the PDF", "this paper", etc.
-- Questions about figures, tables, or sections mentioned in the document
-- The query requires information that would be in the uploaded PDF
+2. **general_llm**: Answer general knowledge questions without document context.
+   - Use for questions about concepts, definitions, or general topics
+   - Examples: "What is RAG?", "Explain transformers", "Define machine learning"
+   - Do NOT use this if a PDF is uploaded and the question is about the document
 
-**Use General LLM when:**
-- The question is about general concepts or definitions
-- The user asks for explanations not specific to the document
-- Questions like "What is RAG?", "Explain transformers", etc.
-- The query doesn't reference the uploaded document
+## Tool Selection Rules:
+
+**When PDF is uploaded:**
+- Questions about the document → use pdf_retrieval
+- Questions about specific content, figures, tables → use pdf_retrieval  
+- General knowledge questions → use general_llm
+
+**When NO PDF is uploaded:**
+- All questions → use general_llm
 
 ## Response Guidelines:
-- Always provide clear, accurate, and helpful responses
-- When using PDF retrieval, cite the page numbers from the retrieved context
-- If the PDF retrieval doesn't find relevant information, say so honestly
-- For general questions, provide comprehensive explanations
+- Provide clear, accurate, and helpful responses
+- When using pdf_retrieval, cite page numbers from the retrieved context
+- If pdf_retrieval finds no relevant information, say so honestly
 - Be conversational and maintain context from previous messages
 
-Current date: {current_date}
+Current date: {{current_date}}
 """
 
 
@@ -90,6 +108,9 @@ class PDFAgent:
         self.vector_store_manager = vector_store_manager
         self.retrieval_k = retrieval_k
         
+        # Track PDF status
+        self.pdf_filename: Optional[str] = None
+        
         # Initialize components
         self._llm: Optional[ChatOllama] = None
         self._tools = None
@@ -124,9 +145,13 @@ class PDFAgent:
     
     def _create_agent(self) -> AgentExecutor:
         """Create the tool-calling agent."""
+        # Get dynamic system prompt based on PDF status
+        has_pdf = self.vector_store_manager is not None and self.vector_store_manager.get_vector_store() is not None
+        system_prompt = get_system_prompt(has_pdf=has_pdf, pdf_filename=self.pdf_filename)
+        
         # Create the prompt template
         prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
+            ("system", system_prompt),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
@@ -157,14 +182,16 @@ class PDFAgent:
             self._agent_executor = self._create_agent()
         return self._agent_executor
     
-    def update_vector_store(self, vector_store_manager: VectorStoreManager) -> None:
+    def update_vector_store(self, vector_store_manager: VectorStoreManager, pdf_filename: str = None) -> None:
         """
         Update the vector store manager and recreate tools.
         
         Args:
             vector_store_manager: New vector store manager
+            pdf_filename: Name of the uploaded PDF file
         """
         self.vector_store_manager = vector_store_manager
+        self.pdf_filename = pdf_filename
         
         # Recreate tools with new vector store
         self._tools = create_tools(
@@ -172,7 +199,7 @@ class PDFAgent:
             retrieval_k=self.retrieval_k,
         )
         
-        # Recreate agent with new tools
+        # Recreate agent with new tools and updated prompt
         self._agent_executor = None
     
     def clear_memory(self) -> None:
@@ -191,6 +218,9 @@ class PDFAgent:
             Tuple of (response text, tool used name)
         """
         try:
+            # Recreate agent with updated system prompt (in case PDF status changed)
+            self._agent_executor = self._create_agent()
+            
             # Invoke the agent with current chat history
             result = self.agent_executor.invoke({
                 "input": query,

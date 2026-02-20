@@ -166,8 +166,9 @@ def process_uploaded_pdf(uploaded_file: BytesIO, filename: str) -> Dict[str, Any
                 vector_store_manager=vector_store_manager,
                 retrieval_k=RETRIEVAL_K,
             )
+            st.session_state.agent.pdf_filename = filename
         else:
-            st.session_state.agent.update_vector_store(vector_store_manager)
+            st.session_state.agent.update_vector_store(vector_store_manager, pdf_filename=filename)
         
         return {
             "success": True,
